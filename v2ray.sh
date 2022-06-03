@@ -1,610 +1,1125 @@
 #!/bin/bash
 
-# The files installed by the script conform to the Filesystem Hierarchy Standard:
-# https://wiki.linuxfoundation.org/lsb/fhs
+#====================================================
+#	System Request:Debian 9+/Ubuntu 18.04+/Centos 7+
+#	Author:	Aaron
+#	Dscription: V2ray ws+tls onekey Management
+#	Version: 1.0
+#	email:hackercatherinejones@outlook.com
+#	Official document: www.v2ray.com
+#====================================================
 
-# The URL of the script project is:
-# https://github.com/v2fly/fhs-install-v2ray
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
+export PATH
 
-# The URL of the script is:
-# https://raw.githubusercontent.com/v2fly/fhs-install-v2ray/master/install-release.sh
+cd "$(
+    cd "$(dirname "$0")" || exit
+    pwd
+)" || exit
 
-# If the script executes incorrectly, go to:
-# https://github.com/v2fly/fhs-install-v2ray/issues
+#fonts color
+Green="\033[32m"
+Red="\033[31m"
+# Yellow="\033[33m"
+GreenBG="\033[42;37m"
+RedBG="\033[41;37m"
+Font="\033[0m"
 
-# If you modify the following variables, you also need to modify the unit file yourself:
-# You can modify it to /usr/local/lib/v2ray/
-DAT_PATH='/usr/local/lib/v2ray/'
-# You can modify it to /etc/v2ray/
-JSON_PATH='/etc/v2ray/'
+#notification information
+# Info="${Green}[信息]${Font}"
+OK="${Green}[OK]${Font}"
+Error="${Red}[错误]${Font}"
 
-check_if_running_as_root() {
-    # If you want to run as another user, please modify $UID to be owned by this user
-    if [[ "$UID" -ne '0' ]]; then
-        echo "error: You must run this script as root!"
-        exit 1
-    fi
-}
+# 版本
+shell_version="1.1.9.0"
+shell_mode="None"
+github_branch="master"
+version_cmp="/tmp/version_cmp.tmp"
+v2ray_conf_dir="/etc/v2ray"
+nginx_conf_dir="/etc/nginx/conf/conf.d"
+v2ray_conf="${v2ray_conf_dir}/config.json"
+nginx_conf="${nginx_conf_dir}/v2ray.conf"
+nginx_dir="/etc/nginx"
+web_dir="/home/wwwroot"
+nginx_openssl_src="/usr/local/src"
+v2ray_bin_dir_old="/usr/bin/v2ray"
+v2ray_bin_dir="/usr/local/bin/v2ray"
+v2ctl_bin_dir="/usr/local/bin/v2ctl"
+v2ray_info_file="$HOME/v2ray_info.inf"
+v2ray_qr_config_file="/usr/local/vmess_qr.json"
+nginx_systemd_file="/etc/systemd/system/nginx.service"
+v2ray_systemd_file="/etc/systemd/system/v2ray.service"
+v2ray_access_log="/var/log/v2ray/access.log"
+v2ray_error_log="/var/log/v2ray/error.log"
+amce_sh_file="/root/.acme.sh/acme.sh"
+ssl_update_file="/usr/bin/ssl_update.sh"
+nginx_version="1.20.1"
+openssl_version="1.1.1k"
+jemalloc_version="5.2.1"
+old_config_status="off"
+# v2ray_plugin_version="$(wget -qO- "https://github.com/Catheringinx/v2ray-plugin-copy/tags" | grep -E "/Catheringinx/v2ray-plugin-copy/tags/" | head -1 | sed -r 's/.*tag\/v(.+)\">.*/\1/')"
 
-identify_the_operating_system_and_architecture() {
-    if [[ "$(uname)" == 'Linux' ]]; then
-        case "$(uname -m)" in
-            'i386' | 'i686')
-                MACHINE='32'
-                ;;
-            'amd64' | 'x86_64')
-                MACHINE='64'
-                ;;
-            'armv5tel')
-                MACHINE='arm32-v5'
-                ;;
-            'armv6l')
-                MACHINE='arm32-v6'
-                ;;
-            'armv7' | 'armv7l' )
-                MACHINE='arm32-v7a'
-                ;;
-            'armv8' | 'aarch64')
-                MACHINE='arm64-v8a'
-                ;;
-            'mips')
-                MACHINE='mips32'
-                ;;
-            'mipsle')
-                MACHINE='mips32le'
-                ;;
-            'mips64')
-                MACHINE='mips64'
-                ;;
-            'mips64le')
-                MACHINE='mips64le'
-                ;;
-            'ppc64')
-                MACHINE='ppc64'
-                ;;
-            'ppc64le')
-                MACHINE='ppc64le'
-                ;;
-            'riscv64')
-                MACHINE='riscv64'
-                ;;
-            *)
-                echo "error: The architecture is not supported."
-                exit 1
-                ;;
-        esac
-        if [[ ! -f '/etc/os-release' ]]; then
-            echo "error: Don't use outdated Linux distributions."
-            exit 1
-        fi
-        if [[ -z "$(ls -l /sbin/init | grep systemd)" ]]; then
-            echo "error: Only Linux distributions using systemd are supported."
-            exit 1
-        fi
-        if [[ "$(command -v apt)" ]]; then
-            PACKAGE_MANAGEMENT_INSTALL='apt install'
-            PACKAGE_MANAGEMENT_REMOVE='apt remove'
-        elif [[ "$(command -v yum)" ]]; then
-            PACKAGE_MANAGEMENT_INSTALL='yum install'
-            PACKAGE_MANAGEMENT_REMOVE='yum remove'
-            if [[ "$(command -v dnf)" ]]; then
-                PACKAGE_MANAGEMENT_INSTALL='dnf install'
-                PACKAGE_MANAGEMENT_REMOVE='dnf remove'
-            fi
-        elif [[ "$(command -v zypper)" ]]; then
-            PACKAGE_MANAGEMENT_INSTALL='zypper install'
-            PACKAGE_MANAGEMENT_REMOVE='zypper remove'
-        else
-            echo "error: The script does not support the package manager in this operating system."
-            exit 1
-        fi
+#移动旧版本配置信息 对小于 1.1.0 版本适配
+[[ -f "/etc/v2ray/vmess_qr.json" ]] && mv /etc/v2ray/vmess_qr.json $v2ray_qr_config_file
+
+#简易随机数
+random_num=$((RANDOM%12+4))
+#生成伪装路径
+camouflage="/$(head -n 10 /dev/urandom | md5sum | head -c ${random_num})/"
+
+THREAD=$(grep 'processor' /proc/cpuinfo | sort -u | wc -l)
+
+source '/etc/os-release'
+
+#从VERSION中提取发行版系统的英文名称，为了在debian/ubuntu下添加相对应的Nginx apt源
+VERSION=$(echo "${VERSION}" | awk -F "[()]" '{print $2}')
+
+check_system() {
+    if [[ "${ID}" == "centos" && ${VERSION_ID} -ge 7 ]]; then
+        echo -e "${OK} ${GreenBG} 当前系统为 Centos ${VERSION_ID} ${VERSION} ${Font}"
+        INS="yum"
+    elif [[ "${ID}" == "debian" && ${VERSION_ID} -ge 8 ]]; then
+        echo -e "${OK} ${GreenBG} 当前系统为 Debian ${VERSION_ID} ${VERSION} ${Font}"
+        INS="apt"
+        $INS update
+        ## 添加 Nginx apt源
+    elif [[ "${ID}" == "ubuntu" && $(echo "${VERSION_ID}" | cut -d '.' -f1) -ge 16 ]]; then
+        echo -e "${OK} ${GreenBG} 当前系统为 Ubuntu ${VERSION_ID} ${UBUNTU_CODENAME} ${Font}"
+        INS="apt"
+        rm /var/lib/dpkg/lock
+        dpkg --configure -a
+        rm /var/lib/apt/lists/lock
+        rm /var/cache/apt/archives/lock
+        $INS update
     else
-        echo "error: This operating system is not supported."
+        echo -e "${Error} ${RedBG} 当前系统为 ${ID} ${VERSION_ID} 不在支持的系统列表内，安装中断 ${Font}"
+        exit 1
+    fi
+
+    $INS install dbus
+
+    systemctl stop firewalld
+    systemctl disable firewalld
+    echo -e "${OK} ${GreenBG} firewalld 已关闭 ${Font}"
+
+    systemctl stop ufw
+    systemctl disable ufw
+    echo -e "${OK} ${GreenBG} ufw 已关闭 ${Font}"
+}
+
+is_root() {
+    if [ 0 == $UID ]; then
+        echo -e "${OK} ${GreenBG} 当前用户是root用户，进入安装流程 ${Font}"
+        sleep 3
+    else
+        echo -e "${Error} ${RedBG} 当前用户不是root用户，请切换到root用户后重新执行脚本 ${Font}"
         exit 1
     fi
 }
 
-judgment_parameters() {
-    if [[ "$#" -gt '0' ]]; then
-        case "$1" in
-            '--remove')
-                if [[ "$#" -gt '1' ]]; then
-                    echo 'error: Please enter the correct parameters.'
-                    exit 1
-                fi
-                REMOVE='1'
-                ;;
-            '--version')
-                if [[ "$#" -gt '2' ]] || [[ -z "$2" ]]; then
-                    echo 'error: Please specify the correct version.'
-                    exit 1
-                fi
-                VERSION="$2"
-                ;;
-            '-c' | '--check')
-                if [[ "$#" -gt '1' ]]; then
-                    echo 'error: Please enter the correct parameters.'
-                    exit 1
-                fi
-                CHECK='1'
-                ;;
-            '-f' | '--force')
-                if [[ "$#" -gt '1' ]]; then
-                    echo 'error: Please enter the correct parameters.'
-                    exit 1
-                fi
-                FORCE='1'
-                ;;
-            '-h' | '--help')
-                if [[ "$#" -gt '1' ]]; then
-                    echo 'error: Please enter the correct parameters.'
-                    exit 1
-                fi
-                HELP='1'
-                ;;
-            '-l' | '--local')
-                if [[ "$#" -gt '2' ]] || [[ -z "$2" ]]; then
-                    echo 'error: Please specify the correct local file.'
-                    exit 1
-                fi
-                LOCAL_FILE="$2"
-                LOCAL_INSTALL='1'
-                ;;
-            '-p' | '--proxy')
-                case "$2" in
-                    'http://'*)
-                        ;;
-                    'https://'*)
-                        ;;
-                    'socks4://'*)
-                        ;;
-                    'socks4a://'*)
-                        ;;
-                    'socks5://'*)
-                        ;;
-                    'socks5h://'*)
-                        ;;
-                    *)
-                        echo 'error: Please specify the correct proxy server address.'
-                        exit 1
-                        ;;
-                esac
-                PROXY="-x$2"
-                # Parameters available through a proxy server
-                if [[ "$#" -gt '2' ]]; then
-                    case "$3" in
-                        '--version')
-                            if [[ "$#" -gt '4' ]] || [[ -z "$4" ]]; then
-                                echo 'error: Please specify the correct version.'
-                                exit 1
-                            fi
-                            VERSION="$2"
-                            ;;
-                        '-c' | '--check')
-                            if [[ "$#" -gt '3' ]]; then
-                                echo 'error: Please enter the correct parameters.'
-                                exit 1
-                            fi
-                            CHECK='1'
-                            ;;
-                        '-f' | '--force')
-                            if [[ "$#" -gt '3' ]]; then
-                                echo 'error: Please enter the correct parameters.'
-                                exit 1
-                            fi
-                            FORCE='1'
-                            ;;
-                        *)
-                            echo "$0: unknown option -- -"
-                            exit 1
-                            ;;
-                    esac
-                fi
-                ;;
-            *)
-                echo "$0: unknown option -- -"
-                exit 1
-                ;;
-        esac
-    fi
-}
-
-install_software() {
-    COMPONENT="$1"
-    if [[ -n "$(command -v "$COMPONENT")" ]]; then
-        return
-    fi
-    ${PACKAGE_MANAGEMENT_INSTALL} "$COMPONENT"
-    if [[ "$?" -ne '0' ]]; then
-        echo "error: Installation of $COMPONENT failed, please check your network."
+judge() {
+    if [[ 0 -eq $? ]]; then
+        echo -e "${OK} ${GreenBG} $1 完成 ${Font}"
+        sleep 1
+    else
+        echo -e "${Error} ${RedBG} $1 失败${Font}"
         exit 1
     fi
-    echo "info: $COMPONENT is installed."
 }
 
-version_number() {
-    case "$1" in
-        'v'*)
-            echo "$1"
-            ;;
-        *)
-            echo "v$1"
-            ;;
+chrony_install() {
+    ${INS} -y install chrony
+    judge "安装 chrony 时间同步服务 "
+
+    timedatectl set-ntp true
+
+    if [[ "${ID}" == "centos" ]]; then
+        systemctl enable chronyd && systemctl restart chronyd
+    else
+        systemctl enable chrony && systemctl restart chrony
+    fi
+
+    judge "chronyd 启动 "
+
+    timedatectl set-timezone Asia/Shanghai
+
+    echo -e "${OK} ${GreenBG} 等待时间同步 ${Font}"
+    sleep 10
+
+    chronyc sourcestats -v
+    chronyc tracking -v
+    date
+    read -rp "请确认时间是否准确,误差范围±3分钟(Y/N): " chrony_install
+    [[ -z ${chrony_install} ]] && chrony_install="Y"
+    case $chrony_install in
+    [yY][eE][sS] | [yY])
+        echo -e "${GreenBG} 继续安装 ${Font}"
+        sleep 2
+        ;;
+    *)
+        echo -e "${RedBG} 安装终止 ${Font}"
+        exit 2
+        ;;
     esac
 }
 
-get_version() {
-    # 0: Install or update V2Ray.
-    # 1: Installed or no new version of V2Ray.
-    # 2: Install the specified version of V2Ray.
-    if [[ -z "$VERSION" ]]; then
-        # Determine the version number for V2Ray installed from a local file
-        if [[ -f '/usr/local/bin/v2ray' ]]; then
-            VERSION="$(/usr/local/bin/v2ray -version)"
-            CURRENT_VERSION="$(version_number $(echo "$VERSION" | head -n 1 | awk -F ' ' '{print $2}'))"
-            if [[ "$LOCAL_INSTALL" -eq '1' ]]; then
-                RELEASE_VERSION="$CURRENT_VERSION"
-                return
+dependency_install() {
+    ${INS} install wget git lsof -y
+
+    if [[ "${ID}" == "centos" ]]; then
+        ${INS} -y install crontabs
+    else
+        ${INS} -y install cron
+    fi
+    judge "安装 crontab"
+
+    if [[ "${ID}" == "centos" ]]; then
+        touch /var/spool/cron/root && chmod 600 /var/spool/cron/root
+        systemctl start crond && systemctl enable crond
+    else
+        touch /var/spool/cron/crontabs/root && chmod 600 /var/spool/cron/crontabs/root
+        systemctl start cron && systemctl enable cron
+
+    fi
+    judge "crontab 自启动配置 "
+
+    ${INS} -y install bc
+    judge "安装 bc"
+
+    ${INS} -y install unzip
+    judge "安装 unzip"
+
+    ${INS} -y install qrencode
+    judge "安装 qrencode"
+
+    ${INS} -y install curl
+    judge "安装 curl"
+
+    if [[ "${ID}" == "centos" ]]; then
+        ${INS} -y groupinstall "Development tools"
+    else
+        ${INS} -y install build-essential
+    fi
+    judge "编译工具包 安装"
+
+    if [[ "${ID}" == "centos" ]]; then
+        ${INS} -y install pcre pcre-devel zlib-devel epel-release
+    else
+        ${INS} -y install libpcre3 libpcre3-dev zlib1g-dev dbus
+    fi
+
+    #    ${INS} -y install rng-tools
+    #    judge "rng-tools 安装"
+
+    ${INS} -y install haveged
+    #    judge "haveged 安装"
+
+    #    sed -i -r '/^HRNGDEVICE/d;/#HRNGDEVICE=\/dev\/null/a HRNGDEVICE=/dev/urandom' /etc/default/rng-tools
+
+    if [[ "${ID}" == "centos" ]]; then
+        #       systemctl start rngd && systemctl enable rngd
+        #       judge "rng-tools 启动"
+        systemctl start haveged && systemctl enable haveged
+        #       judge "haveged 启动"
+    else
+        #       systemctl start rng-tools && systemctl enable rng-tools
+        #       judge "rng-tools 启动"
+        systemctl start haveged && systemctl enable haveged
+        #       judge "haveged 启动"
+    fi
+
+    mkdir -p /usr/local/bin >/dev/null 2>&1
+}
+
+basic_optimization() {
+    # 最大文件打开数
+    sed -i '/^\*\ *soft\ *nofile\ *[[:digit:]]*/d' /etc/security/limits.conf
+    sed -i '/^\*\ *hard\ *nofile\ *[[:digit:]]*/d' /etc/security/limits.conf
+    echo '* soft nofile 65536' >>/etc/security/limits.conf
+    echo '* hard nofile 65536' >>/etc/security/limits.conf
+
+    # 关闭 Selinux
+    if [[ "${ID}" == "centos" ]]; then
+        sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config
+        setenforce 0
+    fi
+
+}
+
+port_alterid_set() {
+    if [[ "on" != "$old_config_status" ]]; then
+        read -rp "请输入连接端口（default:443）:" port
+        [[ -z ${port} ]] && port="443"
+        alterID="0"
+    fi
+}
+
+modify_path() {
+    if [[ "on" == "$old_config_status" ]]; then
+        camouflage="$(grep '\"path\"' $v2ray_qr_config_file | awk -F '"' '{print $4}')"
+    fi
+    sed -i "/\"path\"/c \\\t  \"path\":\"${camouflage}\"" ${v2ray_conf}
+    judge "V2ray 伪装路径 修改"
+}
+
+modify_inbound_port() {
+    if [[ "on" == "$old_config_status" ]]; then
+        port="$(info_extraction '\"port\"')"
+    fi
+    if [[ "$shell_mode" != "h2" ]]; then
+        PORT=$((RANDOM + 10000))
+        sed -i "/\"port\"/c  \    \"port\":${PORT}," ${v2ray_conf}
+    else
+        sed -i "/\"port\"/c  \    \"port\":${port}," ${v2ray_conf}
+    fi
+    judge "V2ray inbound_port 修改"
+}
+
+modify_UUID() {
+    [ -z "$UUID" ] && UUID=$(cat /proc/sys/kernel/random/uuid)
+    if [[ "on" == "$old_config_status" ]]; then
+        UUID="$(info_extraction '\"id\"')"
+    fi
+    sed -i "/\"id\"/c \\\t  \"id\":\"${UUID}\"," ${v2ray_conf}
+    judge "V2ray UUID 修改"
+    [ -f ${v2ray_qr_config_file} ] && sed -i "/\"id\"/c \\  \"id\": \"${UUID}\"," ${v2ray_qr_config_file}
+    echo -e "${OK} ${GreenBG} UUID:${UUID} ${Font}"
+}
+
+modify_nginx_port() {
+    if [[ "on" == "$old_config_status" ]]; then
+        port="$(info_extraction '\"port\"')"
+    fi
+    sed -i "/ssl http2;$/c \\\tlisten ${port} ssl http2;" ${nginx_conf}
+    sed -i "3c \\\tlisten [::]:${port} http2;" ${nginx_conf}
+    judge "V2ray port 修改"
+    [ -f ${v2ray_qr_config_file} ] && sed -i "/\"port\"/c \\  \"port\": \"${port}\"," ${v2ray_qr_config_file}
+    echo -e "${OK} ${GreenBG} 端口号:${port} ${Font}"
+}
+
+modify_nginx_other() {
+    sed -i "/server_name/c \\\tserver_name ${domain};" ${nginx_conf}
+    sed -i "/location/c \\\tlocation ${camouflage}" ${nginx_conf}
+    sed -i "/proxy_pass/c \\\tproxy_pass http://127.0.0.1:${PORT};" ${nginx_conf}
+    sed -i "/return/c \\\treturn 301 https://${domain}\$request_uri;" ${nginx_conf}
+    #sed -i "27i \\\tproxy_intercept_errors on;"  ${nginx_dir}/conf/nginx.conf
+}
+
+web_camouflage() {
+    ##请注意 这里和LNMP脚本的默认路径冲突，千万不要在安装了LNMP的环境下使用本脚本，否则后果自负
+    rm -rf /home/wwwroot
+    mkdir -p /home/wwwroot
+    cd /home/wwwroot || exit
+    git clone https://github.com/Catheringinx/fakeweb.git
+    judge "web 站点伪装"
+}
+
+v2ray_install() {
+    if [[ -d /root/v2ray ]]; then
+        rm -rf /root/v2ray
+    fi
+    if [[ -d /etc/v2ray ]]; then
+        rm -rf /etc/v2ray
+    fi
+    mkdir -p /root/v2ray
+    cd /root/v2ray || exit
+    wget -N --no-check-certificate https://raw.githubusercontents.com/Catheringinx/V2Ray_ws-tls_bash_onekeyinstall/${github_branch}/v2ray.sh
+
+    if [[ -f v2ray.sh ]]; then
+        rm -rf $v2ray_systemd_file
+        systemctl daemon-reload
+        bash v2ray.sh --force
+        judge "安装 V2ray"
+    else
+        echo -e "${Error} ${RedBG} V2ray 安装文件下载失败，请检查下载地址是否可用 ${Font}"
+        exit 4
+    fi
+    # 清除临时文件
+    rm -rf /root/v2ray
+}
+
+nginx_exist_check() {
+    if [[ -f "/etc/nginx/sbin/nginx" ]]; then
+        echo -e "${OK} ${GreenBG} Nginx已存在，跳过编译安装过程 ${Font}"
+        sleep 2
+    elif [[ -d "/usr/local/nginx/" ]]; then
+        echo -e "${OK} ${GreenBG} 检测到其他套件安装的Nginx，继续安装会造成冲突，请处理后安装${Font}"
+        exit 1
+    else
+        nginx_install
+    fi
+}
+
+nginx_install() {
+    #    if [[ -d "/etc/nginx" ]];then
+    #        rm -rf /etc/nginx
+    #    fi
+
+    wget -nc --no-check-certificate https://nginx.org/download/nginx-${nginx_version}.tar.gz -P ${nginx_openssl_src}
+    judge "Nginx 下载"
+    wget -nc --no-check-certificate https://www.openssl.org/source/openssl-${openssl_version}.tar.gz -P ${nginx_openssl_src}
+    judge "openssl 下载"
+    wget -nc --no-check-certificate https://github.com/jemalloc/jemalloc/releases/download/${jemalloc_version}/jemalloc-${jemalloc_version}.tar.bz2 -P ${nginx_openssl_src}
+    judge "jemalloc 下载"
+
+    cd ${nginx_openssl_src} || exit
+
+    [[ -d nginx-"$nginx_version" ]] && rm -rf nginx-"$nginx_version"
+    tar -zxvf nginx-"$nginx_version".tar.gz
+
+    [[ -d openssl-"$openssl_version" ]] && rm -rf openssl-"$openssl_version"
+    tar -zxvf openssl-"$openssl_version".tar.gz
+
+    [[ -d jemalloc-"${jemalloc_version}" ]] && rm -rf jemalloc-"${jemalloc_version}"
+    tar -xvf jemalloc-"${jemalloc_version}".tar.bz2
+
+    [[ -d "$nginx_dir" ]] && rm -rf ${nginx_dir}
+
+    echo -e "${OK} ${GreenBG} 即将开始编译安装 jemalloc ${Font}"
+    sleep 2
+
+    cd jemalloc-${jemalloc_version} || exit
+    ./configure
+    judge "编译检查"
+    make -j "${THREAD}" && make install
+    judge "jemalloc 编译安装"
+    echo '/usr/local/lib' >/etc/ld.so.conf.d/local.conf
+    ldconfig
+
+    echo -e "${OK} ${GreenBG} 即将开始编译安装 Nginx, 过程稍久，请耐心等待 ${Font}"
+    sleep 4
+
+    cd ../nginx-${nginx_version} || exit
+
+    ./configure --prefix="${nginx_dir}" \
+        --with-http_ssl_module \
+        --with-http_sub_module \
+        --with-http_gzip_static_module \
+        --with-http_stub_status_module \
+        --with-pcre \
+        --with-http_realip_module \
+        --with-http_flv_module \
+        --with-http_mp4_module \
+        --with-http_secure_link_module \
+        --with-http_v2_module \
+        --with-cc-opt='-O3' \
+        --with-ld-opt="-ljemalloc" \
+        --with-openssl=../openssl-"$openssl_version"
+    judge "编译检查"
+    make -j "${THREAD}" && make install
+    judge "Nginx 编译安装"
+
+    # 修改基本配置
+    sed -i 's/#user  nobody;/user  root;/' ${nginx_dir}/conf/nginx.conf
+    sed -i 's/worker_processes  1;/worker_processes  3;/' ${nginx_dir}/conf/nginx.conf
+    sed -i 's/    worker_connections  1024;/    worker_connections  4096;/' ${nginx_dir}/conf/nginx.conf
+    sed -i '$i include conf.d/*.conf;' ${nginx_dir}/conf/nginx.conf
+
+    # 删除临时文件
+    rm -rf ../nginx-"${nginx_version}"
+    rm -rf ../openssl-"${openssl_version}"
+    rm -rf ../nginx-"${nginx_version}".tar.gz
+    rm -rf ../openssl-"${openssl_version}".tar.gz
+
+    # 添加配置文件夹，适配旧版脚本
+    mkdir ${nginx_dir}/conf/conf.d
+}
+
+ssl_install() {
+    if [[ "${ID}" == "centos" ]]; then
+        ${INS} install socat nc -y
+    else
+        ${INS} install socat netcat -y
+    fi
+    judge "安装 SSL 证书生成脚本依赖"
+
+    curl https://get.acme.sh | sh
+    judge "安装 SSL 证书生成脚本"
+}
+
+domain_check() {
+    read -rp "请输入你的域名信息(eg:www.catherinejones.com):" domain
+    domain_ip=$(curl -sm8 https://ipget.net/?ip="${domain}")
+    echo -e "${OK} ${GreenBG} 正在获取 公网ip 信息，请耐心等待 ${Font}"
+    wgcfv4_status=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
+    wgcfv6_status=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
+    if [[ ${wgcfv4_status} =~ "on"|"plus" ]] || [[ ${wgcfv6_status} =~ "on"|"plus" ]]; then
+        # 关闭wgcf-warp，以防误判VPS IP情况
+        wg-quick down wgcf >/dev/null 2>&1
+        echo -e "${OK} ${GreenBG} 已关闭 wgcf-warp ${Font}"
+    fi
+    local_ipv4=$(curl -s4m8 https://ip.gs)
+    local_ipv6=$(curl -s6m8 https://ip.gs)
+    if [[ -z ${local_ipv4} && -n ${local_ipv6} ]]; then
+        echo -e nameserver 2a01:4f8:c2c:123f::1 > /etc/resolv.conf
+        echo -e "${OK} ${GreenBG} 识别为 IPv6 Only 的 VPS，自动添加 DNS64 服务器 ${Font}"
+    fi
+    echo -e "域名 DNS 解析到的的 IP：${domain_ip}"
+    echo -e "本机IPv4: ${local_ipv4}"
+    echo -e "本机IPv6: ${local_ipv6}"
+    sleep 2
+    if [[ ${domain_ip} == ${local_ipv4} ]]; then
+        echo -e "${OK} ${GreenBG} 域名 DNS 解析 IP 与 本机 IPv4 匹配 ${Font}"
+        sleep 2
+    elif [[ ${domain_ip} == ${local_ipv6} ]]; then
+        echo -e "${OK} ${GreenBG} 域名 DNS 解析 IP 与 本机 IPv6 匹配 ${Font}"
+        sleep 2
+    else
+        echo -e "${Error} ${RedBG} 请确保域名添加了正确的 A / AAAA 记录，否则将无法正常使用 V2ray ${Font}"
+        echo -e "${Error} ${RedBG} 域名 DNS 解析 IP 与 本机 IPv4 / IPv6 不匹配 是否继续安装？（y/n）${Font}" && read -r install
+        case $install in
+        [yY][eE][sS] | [yY])
+            echo -e "${GreenBG} 继续安装 ${Font}"
+            sleep 2
+            ;;
+        *)
+            echo -e "${RedBG} 安装终止 ${Font}"
+            exit 2
+            ;;
+        esac
+    fi
+}
+
+port_exist_check() {
+    if [[ 0 -eq $(lsof -i:"$1" | grep -i -c "listen") ]]; then
+        echo -e "${OK} ${GreenBG} $1 端口未被占用 ${Font}"
+        sleep 1
+    else
+        echo -e "${Error} ${RedBG} 检测到 $1 端口被占用，以下为 $1 端口占用信息 ${Font}"
+        lsof -i:"$1"
+        echo -e "${OK} ${GreenBG} 5s 后将尝试自动 kill 占用进程 ${Font}"
+        sleep 5
+        lsof -i:"$1" | awk '{print $2}' | grep -v "PID" | xargs kill -9
+        echo -e "${OK} ${GreenBG} kill 完成 ${Font}"
+        sleep 1
+    fi
+}
+acme() {
+    "$HOME"/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+
+    if "$HOME"/.acme.sh/acme.sh --issue --insecure -d "${domain}" --standalone -k ec-256 --force; then
+        echo -e "${OK} ${GreenBG} SSL 证书生成成功 ${Font}"
+        sleep 2
+        mkdir /data
+        if "$HOME"/.acme.sh/acme.sh --installcert -d "${domain}" --fullchainpath /data/v2ray.crt --keypath /data/v2ray.key --ecc --force; then
+            echo -e "${OK} ${GreenBG} 证书配置成功 ${Font}"
+            sleep 2
+            if [[ -n $(type -P wgcf) && -n $(type -P wg-quick) ]]; then
+                wg-quick up wgcf >/dev/null 2>&1
+                echo -e "${OK} ${GreenBG} 已启动 wgcf-warp ${Font}"
             fi
-        fi
-        # Get V2Ray release version number
-        TMP_FILE="$(mktemp)"
-        install_software curl
-        # DO NOT QUOTE THESE `${PROXY}` VARIABLES!
-        if ! curl ${PROXY} -o "$TMP_FILE" 'https://api.github.com/repos/v2fly/v2ray-core/releases/latest'; then
-            rm "$TMP_FILE"
-            echo 'error: Failed to get release list, please check your network.'
-            exit 1
-        fi
-        RELEASE_LATEST="$(sed 'y/,/\n/' "$TMP_FILE" | grep 'tag_name' | awk -F '"' '{print $4}')"
-        rm "$TMP_FILE"
-        RELEASE_VERSION="$(version_number "$RELEASE_LATEST")"
-        # Compare V2Ray version numbers
-        if [[ "$RELEASE_VERSION" != "$CURRENT_VERSION" ]]; then
-            RELEASE_VERSIONSION_NUMBER="${RELEASE_VERSION#v}"
-            RELEASE_MAJOR_VERSION_NUMBER="${RELEASE_VERSIONSION_NUMBER%%.*}"
-            RELEASE_MINOR_VERSION_NUMBER="$(echo "$RELEASE_VERSIONSION_NUMBER" | awk -F '.' '{print $2}')"
-            RELEASE_MINIMUM_VERSION_NUMBER="${RELEASE_VERSIONSION_NUMBER##*.}"
-            CURRENT_VERSIONSION_NUMBER="$(echo "${CURRENT_VERSION#v}" | sed 's/-.*//')"
-            CURRENT_MAJOR_VERSION_NUMBER="${CURRENT_VERSIONSION_NUMBER%%.*}"
-            CURRENT_MINOR_VERSION_NUMBER="$(echo "$CURRENT_VERSIONSION_NUMBER" | awk -F '.' '{print $2}')"
-            CURRENT_MINIMUM_VERSION_NUMBER="${CURRENT_VERSIONSION_NUMBER##*.}"
-            if [[ "$RELEASE_MAJOR_VERSION_NUMBER" -gt "$CURRENT_MAJOR_VERSION_NUMBER" ]]; then
-                return 0
-            elif [[ "$RELEASE_MAJOR_VERSION_NUMBER" -eq "$CURRENT_MAJOR_VERSION_NUMBER" ]]; then
-                if [[ "$RELEASE_MINOR_VERSION_NUMBER" -gt "$CURRENT_MINOR_VERSION_NUMBER" ]]; then
-                    return 0
-                elif [[ "$RELEASE_MINOR_VERSION_NUMBER" -eq "$CURRENT_MINOR_VERSION_NUMBER" ]]; then
-                    if [[ "$RELEASE_MINIMUM_VERSION_NUMBER" -gt "$CURRENT_MINIMUM_VERSION_NUMBER" ]]; then
-                        return 0
-                    else
-                        return 1
-                    fi
-                else
-                    return 1
-                fi
-            else
-                return 1
-            fi
-        elif [[ "$RELEASE_VERSION" == "$CURRENT_VERSION" ]]; then
-            return 1
         fi
     else
-        RELEASE_VERSION="$(version_number "$VERSION")"
-        return 2
-    fi
-}
-
-download_v2ray() {
-    mkdir "$TMP_DIRECTORY"
-    DOWNLOAD_LINK="https://github.com/v2fly/v2ray-core/releases/download/$RELEASE_VERSION/v2ray-linux-$MACHINE.zip"
-    echo "Downloading V2Ray archive: $DOWNLOAD_LINK"
-    if ! curl ${PROXY} -L -H 'Cache-Control: no-cache' -o "$ZIP_FILE" "$DOWNLOAD_LINK"; then
-        echo 'error: Download failed! Please check your network or try again.'
-        return 1
-    fi
-    echo "Downloading verification file for V2Ray archive: $DOWNLOAD_LINK.dgst"
-    if ! curl ${PROXY} -L -H 'Cache-Control: no-cache' -o "$ZIP_FILE.dgst" "$DOWNLOAD_LINK.dgst"; then
-        echo 'error: Download failed! Please check your network or try again.'
-        return 1
-    fi
-    if [[ "$(cat "$ZIP_FILE".dgst)" == 'Not Found' ]]; then
-        echo 'error: This version does not support verification. Please replace with another version.'
-        return 1
-    fi
-
-    # Verification of V2Ray archive
-    for LISTSUM in 'md5' 'sha1' 'sha256' 'sha512'; do
-        SUM="$(${LISTSUM}sum "$ZIP_FILE" | sed 's/ .*//')"
-        CHECKSUM="$(grep ${LISTSUM^^} "$ZIP_FILE".dgst | grep "$SUM" -o -a | uniq)"
-        if [[ "$SUM" != "$CHECKSUM" ]]; then
-            echo 'error: Check failed! Please check your network or try again.'
-            return 1
+        echo -e "${Error} ${RedBG} SSL 证书生成失败 ${Font}"
+        rm -rf "$HOME/.acme.sh/${domain}_ecc"
+        if [[ -n $(type -P wgcf) && -n $(type -P wg-quick) ]]; then
+            wg-quick up wgcf >/dev/null 2>&1
+            echo -e "${OK} ${GreenBG} 已启动 wgcf-warp ${Font}"
         fi
-    done
-}
-
-decompression() {
-    if ! unzip -q "$1" -d "$TMP_DIRECTORY"; then
-        echo 'error: V2Ray decompression failed.'
-        rm -r "$TMP_DIRECTORY"
-        echo "removed: $TMP_DIRECTORY"
         exit 1
     fi
-    echo "info: Extract the V2Ray package to $TMP_DIRECTORY and prepare it for installation."
 }
 
-install_file() {
-    NAME="$1"
-    if [[ "$NAME" == 'v2ray' ]] || [[ "$NAME" == 'v2ctl' ]]; then
-        install -m 755 "${TMP_DIRECTORY}$NAME" "/usr/local/bin/$NAME"
-    elif [[ "$NAME" == 'geoip.dat' ]] || [[ "$NAME" == 'geosite.dat' ]]; then
-        install -m 644 "${TMP_DIRECTORY}$NAME" "${DAT_PATH}$NAME"
+v2ray_conf_add_tls() {
+    cd /etc/v2ray || exit
+    wget --no-check-certificate https://raw.githubusercontents.com/Catheringinx/V2Ray_ws-tls_bash_onekeyinstall/${github_branch}/tls/config.json -O config.json
+    modify_path
+    modify_inbound_port
+    modify_UUID
+}
+
+v2ray_conf_add_h2() {
+    cd /etc/v2ray || exit
+    wget --no-check-certificate https://raw.githubusercontents.com/Catheringinx/V2Ray_ws-tls_bash_onekeyinstall/${github_branch}/http2/config.json -O config.json
+    modify_path
+    modify_inbound_port
+    modify_UUID
+}
+
+old_config_exist_check() {
+    if [[ -f $v2ray_qr_config_file ]]; then
+        echo -e "${OK} ${GreenBG} 检测到旧配置文件，是否读取旧文件配置 [Y/N]? ${Font}"
+        read -r ssl_delete
+        case $ssl_delete in
+        [yY][eE][sS] | [yY])
+            echo -e "${OK} ${GreenBG} 已保留旧配置  ${Font}"
+            old_config_status="on"
+            port=$(info_extraction '\"port\"')
+            ;;
+        *)
+            rm -rf $v2ray_qr_config_file
+            echo -e "${OK} ${GreenBG} 已删除旧配置  ${Font}"
+            ;;
+        esac
     fi
 }
 
-install_v2ray() {
-    # Install V2Ray binary to /usr/local/bin/ and $DAT_PATH
-    install_file v2ray
-    install_file v2ctl
-    install -d "$DAT_PATH"
-    # If the file exists, geoip.dat and geosite.dat will not be installed or updated
-    if [[ ! -f "${DAT_PATH}.undat" ]]; then
-        install_file geoip.dat
-        install_file geosite.dat
+nginx_conf_add() {
+    touch ${nginx_conf_dir}/v2ray.conf
+    cat >${nginx_conf_dir}/v2ray.conf <<EOF
+    server {
+        listen 443 ssl http2;
+        listen [::]:443 http2;
+        ssl_certificate       /data/v2ray.crt;
+        ssl_certificate_key   /data/v2ray.key;
+        ssl_protocols         TLSv1.3;
+        ssl_ciphers           TLS13-AES-256-GCM-SHA384:TLS13-CHACHA20-POLY1305-SHA256:TLS13-AES-128-GCM-SHA256:TLS13-AES-128-CCM-8-SHA256:TLS13-AES-128-CCM-SHA256:EECDH+CHACHA20:EECDH+CHACHA20-draft:EECDH+ECDSA+AES128:EECDH+aRSA+AES128:RSA+AES128:EECDH+ECDSA+AES256:EECDH+aRSA+AES256:RSA+AES256:EECDH+ECDSA+3DES:EECDH+aRSA+3DES:RSA+3DES:!MD5;
+        server_name           serveraddr.com;
+        index index.html index.htm;
+        root  /home/wwwroot/3DCEList;
+        error_page 400 = /400.html;
+
+        # Config for 0-RTT in TLSv1.3
+        ssl_early_data on;
+        ssl_stapling on;
+        ssl_stapling_verify on;
+        add_header Strict-Transport-Security "max-age=31536000";
+
+        location /ray/
+        {
+        proxy_redirect off;
+        proxy_read_timeout 1200s;
+        proxy_pass http://127.0.0.1:10000;
+        proxy_http_version 1.1;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$http_host;
+
+        # Config for 0-RTT in TLSv1.3
+        proxy_set_header Early-Data \$ssl_early_data;
+        }
+}
+    server {
+        listen 80;
+        listen [::]:80;
+        server_name serveraddr.com;
+        return 301 https://use.shadowsocksr.win\$request_uri;
+    }
+EOF
+
+    modify_nginx_port
+    modify_nginx_other
+    judge "Nginx 配置修改"
+
+}
+
+start_process_systemd() {
+    systemctl daemon-reload
+    chown -R root.root /var/log/v2ray/
+    if [[ "$shell_mode" != "h2" ]]; then
+        systemctl restart nginx
+        judge "Nginx 启动"
+    fi
+    systemctl restart v2ray
+    judge "V2ray 启动"
+}
+
+enable_process_systemd() {
+    systemctl enable v2ray
+    judge "设置 v2ray 开机自启"
+    if [[ "$shell_mode" != "h2" ]]; then
+        systemctl enable nginx
+        judge "设置 Nginx 开机自启"
     fi
 
-    # Install V2Ray configuration file to $JSON_PATH
-    if [[ ! -d "$JSON_PATH" ]]; then
-        install -d "$JSON_PATH"
-        echo "{}" > "${JSON_PATH}config.json"
-        CONFIG_NEW='1'
-    fi
+}
 
-    # Used to store V2Ray log files
-    if [[ ! -d '/var/log/v2ray/' ]]; then
-        if [[ -n "$(id nobody | grep nogroup)" ]]; then
-            install -d -m 755 -o root -g root /var/log/v2ray/
-            install -m 644 -o root -g root /dev/null /var/log/v2ray/access.log
-            install -m 644 -o root -g root /dev/null /var/log/v2ray/error.log
+stop_process_systemd() {
+    if [[ "$shell_mode" != "h2" ]]; then
+        systemctl stop nginx
+    fi
+    systemctl stop v2ray
+}
+nginx_process_disabled() {
+    [ -f $nginx_systemd_file ] && systemctl stop nginx && systemctl disable nginx
+}
+
+#debian 系 9 10 适配
+#rc_local_initialization(){
+#    if [[ -f /etc/rc.local ]];then
+#        chmod +x /etc/rc.local
+#    else
+#        touch /etc/rc.local && chmod +x /etc/rc.local
+#        echo "#!/bin/bash" >> /etc/rc.local
+#        systemctl start rc-local
+#    fi
+#
+#    judge "rc.local 配置"
+#}
+
+acme_cron_update() {
+    wget -N -P /usr/bin --no-check-certificate "https://raw.githubusercontents.com/Catheringinx/V2Ray_ws-tls_bash_onekeyinstall/dev/ssl_update.sh"
+    if [[ $(crontab -l | grep -c "ssl_update.sh") -lt 1 ]]; then
+      if [[ "${ID}" == "centos" ]]; then
+          #        sed -i "/acme.sh/c 0 3 * * 0 \"/root/.acme.sh\"/acme.sh --cron --home \"/root/.acme.sh\" \
+          #        &> /dev/null" /var/spool/cron/root
+          sed -i "/acme.sh/c 0 3 * * 0 bash ${ssl_update_file}" /var/spool/cron/root
+      else
+          #        sed -i "/acme.sh/c 0 3 * * 0 \"/root/.acme.sh\"/acme.sh --cron --home \"/root/.acme.sh\" \
+          #        &> /dev/null" /var/spool/cron/crontabs/root
+          sed -i "/acme.sh/c 0 3 * * 0 bash ${ssl_update_file}" /var/spool/cron/crontabs/root
+      fi
+    fi
+    judge "cron 计划任务更新"
+}
+
+vmess_qr_config_tls_ws() {
+    cat >$v2ray_qr_config_file <<-EOF
+{
+  "v": "2",
+  "ps": "catherinejones_${domain}",
+  "add": "${domain}",
+  "port": "${port}",
+  "id": "${UUID}",
+  "aid": "${alterID}",
+  "net": "ws",
+  "type": "none",
+  "host": "${domain}",
+  "path": "${camouflage}",
+  "tls": "tls"
+}
+EOF
+}
+
+vmess_qr_config_h2() {
+    cat >$v2ray_qr_config_file <<-EOF
+{
+  "v": "2",
+  "ps": "catherinejones_${domain}",
+  "add": "${domain}",
+  "port": "${port}",
+  "id": "${UUID}",
+  "aid": "${alterID}",
+  "net": "h2",
+  "type": "none",
+  "path": "${camouflage}",
+  "tls": "tls"
+}
+EOF
+}
+
+vmess_qr_link_image() {
+    vmess_link="vmess://$(base64 -w 0 $v2ray_qr_config_file)"
+    {
+        echo -e "$Red 二维码: $Font"
+        echo -n "${vmess_link}" | qrencode -o - -t utf8
+        echo -e "${Red} URL导入链接:${vmess_link} ${Font}"
+    } >>"${v2ray_info_file}"
+}
+
+vmess_quan_link_image() {
+    echo "$(info_extraction '\"ps\"') = vmess, $(info_extraction '\"add\"'), \
+    $(info_extraction '\"port\"'), chacha20-ietf-poly1305, "\"$(info_extraction '\"id\"')\"", over-tls=true, \
+    certificate=1, obfs=ws, obfs-path="\"$(info_extraction '\"path\"')\"", " > /tmp/vmess_quan.tmp
+    vmess_link="vmess://$(base64 -w 0 /tmp/vmess_quan.tmp)"
+    {
+        echo -e "$Red 二维码: $Font"
+        echo -n "${vmess_link}" | qrencode -o - -t utf8
+        echo -e "${Red} URL导入链接:${vmess_link} ${Font}"
+    } >>"${v2ray_info_file}"
+}
+
+vmess_link_image_choice() {
+        echo "请选择生成的链接种类"
+        echo "1: V2RayNG/V2RayN"
+        echo "2: quantumult"
+        read -rp "请输入：" link_version
+        [[ -z ${link_version} ]] && link_version=1
+        if [[ $link_version == 1 ]]; then
+            vmess_qr_link_image
+        elif [[ $link_version == 2 ]]; then
+            vmess_quan_link_image
         else
-            install -d -m 755 -o root -g root /var/log/v2ray/
-            install -m 644 -o root -g root /dev/null /var/log/v2ray/access.log
-            install -m 644 -o root -g root /dev/null /var/log/v2ray/error.log
+            vmess_qr_link_image
         fi
-        LOG='1'
+}
+
+info_extraction() {
+    grep "$1" $v2ray_qr_config_file | awk -F '"' '{print $4}'
+}
+
+basic_information() {
+    {
+        echo -e "${OK} ${GreenBG} V2ray+ws+tls 安装成功"
+        echo -e "${Red} V2ray 配置信息 ${Font}"
+        echo -e "${Red} 地址（address）:${Font} $(info_extraction '\"add\"') "
+        echo -e "${Red} 端口（port）：${Font} $(info_extraction '\"port\"') "
+        echo -e "${Red} 用户id（UUID）：${Font} $(info_extraction '\"id\"')"
+        echo -e "${Red} 额外id（alterId）：${Font} $(info_extraction '\"aid\"')"
+        echo -e "${Red} 加密方式（security）：${Font} 自适应 "
+        echo -e "${Red} 传输协议（network）：${Font} $(info_extraction '\"net\"') "
+        echo -e "${Red} 伪装类型（type）：${Font} none "
+        echo -e "${Red} 路径（不要落下/）：${Font} $(info_extraction '\"path\"') "
+        echo -e "${Red} 底层传输安全：${Font} tls "
+    } >"${v2ray_info_file}"
+}
+
+show_information() {
+    cat "${v2ray_info_file}"
+}
+
+ssl_judge_and_install() {
+    if [[ -f "/data/v2ray.key" || -f "/data/v2ray.crt" ]]; then
+        echo "/data 目录下证书文件已存在"
+        echo -e "${OK} ${GreenBG} 是否删除 [Y/N]? ${Font}"
+        read -r ssl_delete
+        case $ssl_delete in
+        [yY][eE][sS] | [yY])
+            rm -rf /data/*
+            echo -e "${OK} ${GreenBG} 已删除 ${Font}"
+            ;;
+        *) ;;
+
+        esac
+    fi
+
+    if [[ -f "/data/v2ray.key" || -f "/data/v2ray.crt" ]]; then
+        echo "证书文件已存在"
+    elif [[ -f "$HOME/.acme.sh/${domain}_ecc/${domain}.key" && -f "$HOME/.acme.sh/${domain}_ecc/${domain}.cer" ]]; then
+        echo "证书文件已存在"
+        "$HOME"/.acme.sh/acme.sh --installcert -d "${domain}" --fullchainpath /data/v2ray.crt --keypath /data/v2ray.key --ecc
+        judge "证书应用"
+    else
+        ssl_install
+        acme
     fi
 }
 
-install_startup_service_file() {
-    if [[ ! -f '/etc/systemd/system/v2ray.service' ]]; then
-        mkdir "${TMP_DIRECTORY}systemd/system/"
-        install_software curl
-        cat > "${TMP_DIRECTORY}systemd/system/v2ray.service" <<-EOF
+nginx_systemd() {
+    cat >$nginx_systemd_file <<EOF
 [Unit]
-Description=V2Ray Service
-After=network.target nss-lookup.target
+Description=The NGINX HTTP and reverse proxy server
+After=syslog.target network.target remote-fs.target nss-lookup.target
 
 [Service]
-User=root
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-Environment=V2RAY_LOCATION_ASSET=/usr/local/lib/v2ray/
-ExecStart=/usr/local/bin/v2ray -config /etc/v2ray/config.json
-Restart=on-failure
+Type=forking
+PIDFile=/etc/nginx/logs/nginx.pid
+ExecStartPre=/etc/nginx/sbin/nginx -t
+ExecStart=/etc/nginx/sbin/nginx -c ${nginx_dir}/conf/nginx.conf
+ExecReload=/etc/nginx/sbin/nginx -s reload
+ExecStop=/bin/kill -s QUIT \$MAINPID
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
-        cat > "${TMP_DIRECTORY}systemd/system/v2ray@.service" <<-EOF
-[Unit]
-Description=V2Ray Service
-After=network.target nss-lookup.target
 
-[Service]
-User=root
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-Environment=V2RAY_LOCATION_ASSET=/usr/local/lib/v2ray/
-ExecStart=/usr/local/bin/v2ray -config /etc/v2ray/%i.json
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        install -m 644 "${TMP_DIRECTORY}systemd/system/v2ray.service" /etc/systemd/system/v2ray.service
-        install -m 644 "${TMP_DIRECTORY}systemd/system/v2ray@.service" /etc/systemd/system/v2ray@.service
-        SYSTEMD='1'
-    fi
+    judge "Nginx systemd ServerFile 添加"
+    systemctl daemon-reload
 }
 
-start_v2ray() {
-    if [[ -f '/etc/systemd/system/v2ray.service' ]]; then
-        if [[ -z "$V2RAY_CUSTOMIZE" ]]; then
-            systemctl start v2ray
+tls_type() {
+    if [[ -f "/etc/nginx/sbin/nginx" ]] && [[ -f "$nginx_conf" ]] && [[ "$shell_mode" == "ws" ]]; then
+        echo "请选择支持的 TLS 版本（default:3）:"
+        echo "请注意,如果你使用 Quantaumlt X / 路由器 / 旧版 Shadowrocket / 低于 4.18.1 版本的 V2ray core 请选择 兼容模式"
+        echo "1: TLS1.1 TLS1.2 and TLS1.3（兼容模式）"
+        echo "2: TLS1.2 and TLS1.3 (兼容模式)"
+        echo "3: TLS1.3 only"
+        read -rp "请输入：" tls_version
+        [[ -z ${tls_version} ]] && tls_version=3
+        if [[ $tls_version == 3 ]]; then
+            sed -i 's/ssl_protocols.*/ssl_protocols         TLSv1.3;/' $nginx_conf
+            echo -e "${OK} ${GreenBG} 已切换至 TLS1.3 only ${Font}"
+        elif [[ $tls_version == 1 ]]; then
+            sed -i 's/ssl_protocols.*/ssl_protocols         TLSv1.1 TLSv1.2 TLSv1.3;/' $nginx_conf
+            echo -e "${OK} ${GreenBG} 已切换至 TLS1.1 TLS1.2 and TLS1.3 ${Font}"
         else
-            systemctl start "$V2RAY_CUSTOMIZE"
+            sed -i 's/ssl_protocols.*/ssl_protocols         TLSv1.2 TLSv1.3;/' $nginx_conf
+            echo -e "${OK} ${GreenBG} 已切换至 TLS1.2 and TLS1.3 ${Font}"
         fi
-    fi
-    if [[ "$?" -ne 0 ]]; then
-        echo 'error: Failed to start V2Ray service.'
-        exit 1
-    fi
-    echo 'info: Start the V2Ray service.'
-}
-
-stop_v2ray() {
-    V2RAY_CUSTOMIZE="$(systemctl list-units | grep 'v2ray@' | awk -F ' ' '{print $1}')"
-    if [[ -z "$V2RAY_CUSTOMIZE" ]]; then
-        systemctl stop v2ray
+        systemctl restart nginx
+        judge "Nginx 重启"
     else
-        systemctl stop "$V2RAY_CUSTOMIZE"
-    fi
-    if [[ "$?" -ne '0' ]]; then
-        echo 'error: Stopping the V2Ray service failed.'
-        exit 1
-    fi
-    echo 'info: Stop the V2Ray service.'
-}
-
-check_update() {
-    if [[ -f '/etc/systemd/system/v2ray.service' ]]; then
-        get_version
-        if [[ "$?" -eq '0' ]]; then
-            echo "info: Found the latest release of V2Ray $RELEASE_VERSION . (Current release: $CURRENT_VERSION)"
-        elif [[ "$?" -eq '1' ]]; then
-            echo "info: No new version. The current version of V2Ray is $CURRENT_VERSION ."
-        fi
-        exit 0
-    else
-        echo 'error: V2Ray is not installed.'
-        exit 1
+        echo -e "${Error} ${RedBG} Nginx 或 配置文件不存在 或当前安装版本为 h2 ，请正确安装脚本后执行${Font}"
     fi
 }
 
-remove_v2ray() {
-    if [[ -n "$(systemctl list-unit-files | grep 'v2ray')" ]]; then
-        if [[ -n "$(pidof v2ray)" ]]; then
-            stop_v2ray
+show_access_log() {
+    [ -f ${v2ray_access_log} ] && tail -f ${v2ray_access_log} || echo -e "${RedBG}log文件不存在${Font}"
+}
+
+show_error_log() {
+    [ -f ${v2ray_error_log} ] && tail -f ${v2ray_error_log} || echo -e "${RedBG}log文件不存在${Font}"
+}
+
+ssl_update_manuel() {
+    [ -f ${amce_sh_file} ] && "/root/.acme.sh"/acme.sh --cron --home "/root/.acme.sh" || echo -e "${RedBG}证书签发工具不存在，请确认你是否使用了自己的证书${Font}"
+    domain="$(info_extraction '\"add\"')"
+    "$HOME"/.acme.sh/acme.sh --installcert -d "${domain}" --fullchainpath /data/v2ray.crt --keypath /data/v2ray.key --ecc
+}
+
+bbr_boost_sh() {
+    [ -f "tcp.sh" ] && rm -rf ./tcp.sh
+    wget -N --no-check-certificate "https://raw.githubusercontents.com/AaronWalterr/Linux-NetSpeed-copy/master/tcp.sh" && chmod +x tcp.sh && ./tcp.sh
+}
+
+mtproxy_sh() {
+    echo -e "${Error} ${RedBG} 功能维护，暂不可用 ${Font}"
+}
+
+uninstall_all() {
+    stop_process_systemd
+    [[ -f $v2ray_systemd_file ]] && rm -f $v2ray_systemd_file
+    [[ -f $v2ray_bin_dir ]] && rm -f $v2ray_bin_dir
+    [[ -f $v2ctl_bin_dir ]] && rm -f $v2ctl_bin_dir
+    [[ -d $v2ray_bin_dir_old ]] && rm -rf $v2ray_bin_dir_old
+    if [[ -d $nginx_dir ]]; then
+        echo -e "${OK} ${Green} 是否卸载 Nginx [Y/N]? ${Font}"
+        read -r uninstall_nginx
+        case $uninstall_nginx in
+        [yY][eE][sS] | [yY])
+            rm -rf $nginx_dir
+            rm -rf $nginx_systemd_file
+            echo -e "${OK} ${Green} 已卸载 Nginx ${Font}"
+            ;;
+        *) ;;
+
+        esac
+    fi
+    [[ -d $v2ray_conf_dir ]] && rm -rf $v2ray_conf_dir
+    [[ -d $web_dir ]] && rm -rf $web_dir
+    echo -e "${OK} ${Green} 是否卸载acme.sh及证书 [Y/N]? ${Font}"
+    read -r uninstall_acme
+    case $uninstall_acme in
+    [yY][eE][sS] | [yY])
+      /root/.acme.sh/acme.sh --uninstall
+      rm -rf /root/.acme.sh
+      rm -rf /data/*
+      ;;
+    *) ;;
+    esac
+    systemctl daemon-reload
+    echo -e "${OK} ${GreenBG} 已卸载 ${Font}"
+}
+delete_tls_key_and_crt() {
+    [[ -f $HOME/.acme.sh/acme.sh ]] && /root/.acme.sh/acme.sh uninstall >/dev/null 2>&1
+    [[ -d $HOME/.acme.sh ]] && rm -rf "$HOME/.acme.sh"
+    echo -e "${OK} ${GreenBG} 已清空证书遗留文件 ${Font}"
+}
+judge_mode() {
+    if [ -f $v2ray_bin_dir ] || [ -f $v2ray_bin_dir_old/v2ray ]; then
+        if grep -q "ws" $v2ray_qr_config_file; then
+            shell_mode="ws"
+        elif grep -q "h2" $v2ray_qr_config_file; then
+            shell_mode="h2"
         fi
-        NAME="$1"
-        rm /usr/local/bin/v2ray
-        rm /usr/local/bin/v2ctl
-        rm -r "$DAT_PATH"
-        rm /etc/systemd/system/v2ray.service
-        rm /etc/systemd/system/v2ray@.service
-        if [[ "$?" -ne '0' ]]; then
-            echo 'error: Failed to remove V2Ray.'
-            exit 1
-        else
-            echo 'removed: /usr/local/bin/v2ray'
-            echo 'removed: /usr/local/bin/v2ctl'
-            echo "removed: $DAT_PATH"
-            echo 'removed: /etc/systemd/system/v2ray.service'
-            echo 'removed: /etc/systemd/system/v2ray@.service'
-            echo 'Please execute the command: systemctl disable v2ray'
-            echo "You may need to execute a command to remove dependent software: $PACKAGE_MANAGEMENT_REMOVE curl unzip"
-            echo 'info: V2Ray has been removed.'
-            echo 'info: If necessary, manually delete the configuration and log files.'
-            echo "info: e.g., $JSON_PATH and /var/log/v2ray/ ..."
+    fi
+}
+install_v2ray_ws_tls() {
+    is_root
+    check_system
+    chrony_install
+    dependency_install
+    basic_optimization
+    domain_check
+    old_config_exist_check
+    port_alterid_set
+    v2ray_install
+    port_exist_check 80
+    port_exist_check "${port}"
+    nginx_exist_check
+    v2ray_conf_add_tls
+    nginx_conf_add
+    web_camouflage
+    ssl_judge_and_install
+    nginx_systemd
+    vmess_qr_config_tls_ws
+    basic_information
+    vmess_link_image_choice
+    tls_type
+    show_information
+    start_process_systemd
+    enable_process_systemd
+    acme_cron_update
+}
+install_v2_h2() {
+    is_root
+    check_system
+    chrony_install
+    dependency_install
+    basic_optimization
+    domain_check
+    old_config_exist_check
+    port_alterid_set
+    v2ray_install
+    port_exist_check 80
+    port_exist_check "${port}"
+    v2ray_conf_add_h2
+    ssl_judge_and_install
+    vmess_qr_config_h2
+    basic_information
+    vmess_qr_link_image
+    show_information
+    start_process_systemd
+    enable_process_systemd
+
+}
+update_sh() {
+    ol_version=$(curl -L -s https://raw.githubusercontents.com/Catheringinx/V2Ray_ws-tls_bash_onekeyinstall/${github_branch}/install.sh | grep "shell_version=" | head -1 | awk -F '=|"' '{print $3}')
+    echo "$ol_version" >$version_cmp
+    echo "$shell_version" >>$version_cmp
+    if [[ "$shell_version" < "$(sort -rV $version_cmp | head -1)" ]]; then
+        echo -e "${OK} ${GreenBG} 存在新版本，是否更新 [Y/N]? ${Font}"
+        read -r update_confirm
+        case $update_confirm in
+        [yY][eE][sS] | [yY])
+            wget -N --no-check-certificate https://raw.githubusercontents.com/Catheringinx/V2Ray_ws-tls_bash_onekeyinstall/${github_branch}/install.sh
+            echo -e "${OK} ${GreenBG} 更新完成 ${Font}"
             exit 0
-        fi
-    else
-        echo 'error: V2Ray is not installed.'
-        exit 1
-    fi
-}
+            ;;
+        *) ;;
 
-# Explanation of parameters in the script
-show_help() {
-    echo "usage: $0 [--remove | --version number | -c | -f | -h | -l | -p]"
-    echo '  [-p address] [--version number | -c | -f]'
-    echo '  --remove        Remove V2Ray'
-    echo '  --version       Install the specified version of V2Ray, e.g., --version v4.18.0'
-    echo '  -c, --check     Check if V2Ray can be updated'
-    echo '  -f, --force     Force installation of the latest version of V2Ray'
-    echo '  -h, --help      Show help'
-    echo '  -l, --local     Install V2Ray from a local file'
-    echo '  -p, --proxy     Download through a proxy server, e.g., -p http://127.0.0.1:8118 or -p socks5://127.0.0.1:1080'
+        esac
+    else
+        echo -e "${OK} ${GreenBG} 当前版本为最新版本 ${Font}"
+    fi
+
+}
+maintain() {
+    echo -e "${RedBG}该选项暂时无法使用${Font}"
+    echo -e "${RedBG}$1${Font}"
     exit 0
 }
-
-main() {
-    check_if_running_as_root
-    identify_the_operating_system_and_architecture
-    judgment_parameters "$@"
-
-    # Parameter information
-    [[ "$HELP" -eq '1' ]] && show_help
-    [[ "$CHECK" -eq '1' ]] && check_update
-    [[ "$REMOVE" -eq '1' ]] && remove_v2ray
-
-    # Two very important variables
-    TMP_DIRECTORY="$(mktemp -du)/"
-    ZIP_FILE="${TMP_DIRECTORY}v2ray-linux-$MACHINE.zip"
-
-    # Install V2Ray from a local file, but still need to make sure the network is available
-    if [[ "$LOCAL_INSTALL" -eq '1' ]]; then
-        echo 'warn: Install V2Ray from a local file, but still need to make sure the network is available.'
-        echo -n 'warn: Please make sure the file is valid because we cannot confirm it. (Press any key) ...'
-        read
-        install_software unzip
-        mkdir "$TMP_DIRECTORY"
-        decompression "$LOCAL_FILE"
-    else
-        # Normal way
-        get_version
-        NUMBER="$?"
-        if [[ "$NUMBER" -eq '0' ]] || [[ "$FORCE" -eq '1' ]] || [[ "$NUMBER" -eq 2 ]]; then
-            echo "info: Installing V2Ray $RELEASE_VERSION for $(uname -m)"
-            download_v2ray
-            if [[ "$?" -eq '1' ]]; then
-                rm -r "$TMP_DIRECTORY"
-                echo "removed: $TMP_DIRECTORY"
-                exit 0
-            fi
-            install_software unzip
-            decompression "$ZIP_FILE"
-        elif [[ "$NUMBER" -eq '1' ]]; then
-            echo "info: No new version. The current version of V2Ray is $CURRENT_VERSION ."
-            exit 0
-        fi
-    fi
-
-    # Determine if V2Ray is running
-    if [[ -n "$(systemctl list-unit-files | grep 'v2ray')" ]]; then
-        if [[ -n "$(pidof v2ray)" ]]; then
-            stop_v2ray
-            V2RAY_RUNNING='1'
-        fi
-    fi
-    install_v2ray
-    install_startup_service_file
-    echo 'installed: /usr/local/bin/v2ray'
-    echo 'installed: /usr/local/bin/v2ctl'
-    # If the file exists, the content output of installing or updating geoip.dat and geosite.dat will not be displayed
-    if [[ ! -f "${DAT_PATH}.undat" ]]; then
-        echo "installed: ${DAT_PATH}geoip.dat"
-        echo "installed: ${DAT_PATH}geosite.dat"
-    fi
-    if [[ "$CONFIG_NEW" -eq '1' ]]; then
-        echo "installed: ${JSON_PATH}config.json"
-    fi
-    if [[ "$CONFDIR" -eq '1' ]]; then
-        echo "installed: ${JSON_PATH}00_log.json"
-        echo "installed: ${JSON_PATH}01_api.json"
-        echo "installed: ${JSON_PATH}02_dns.json"
-        echo "installed: ${JSON_PATH}03_routing.json"
-        echo "installed: ${JSON_PATH}04_policy.json"
-        echo "installed: ${JSON_PATH}05_inbounds.json"
-        echo "installed: ${JSON_PATH}06_outbounds.json"
-        echo "installed: ${JSON_PATH}07_transport.json"
-        echo "installed: ${JSON_PATH}08_stats.json"
-        echo "installed: ${JSON_PATH}09_reverse.json"
-    fi
-    if [[ "$LOG" -eq '1' ]]; then
-        echo 'installed: /var/log/v2ray/'
-        echo 'installed: /var/log/v2ray/access.log'
-        echo 'installed: /var/log/v2ray/error.log'
-    fi
-    if [[ "$SYSTEMD" -eq '1' ]]; then
-        echo 'installed: /etc/systemd/system/v2ray.service'
-        echo 'installed: /etc/systemd/system/v2ray@.service'
-    fi
-    rm -r "$TMP_DIRECTORY"
-    echo "removed: $TMP_DIRECTORY"
-    if [[ "$LOCAL_INSTALL" -eq '1' ]]; then
-        get_version
-    fi
-    echo "info: V2Ray $RELEASE_VERSION is installed."
-    echo "You may need to execute a command to remove dependent software: $PACKAGE_MANAGEMENT_REMOVE curl unzip"
-    if [[ "$V2RAY_RUNNING" -eq '1' ]]; then
-        start_v2ray
-    else
-        echo 'Please execute the command: systemctl enable v2ray; systemctl start v2ray'
-    fi
+list() {
+    case $1 in
+    tls_modify)
+        tls_type
+        ;;
+    uninstall)
+        uninstall_all
+        ;;
+    crontab_modify)
+        acme_cron_update
+        ;;
+    boost)
+        bbr_boost_sh
+        ;;
+    *)
+        menu
+        ;;
+    esac
+}
+modify_camouflage_path() {
+    [[ -z ${camouflage_path} ]] && camouflage_path=1
+    sed -i "/location/c \\\tlocation \/${camouflage_path}\/" ${nginx_conf}          #Modify the camouflage path of the nginx configuration file
+    sed -i "/\"path\"/c \\\t  \"path\":\"\/${camouflage_path}\/\"" ${v2ray_conf}    #Modify the camouflage path of the v2ray configuration file
+    judge "V2ray camouflage path modified"
 }
 
-main "$@"
+menu() {
+    update_sh
+    echo -e "\t V2ray 安装管理脚本 ${Red}[${shell_version}]${Font}"
+    echo -e "\t---authored by aaron.xu---"
+    echo -e "\thttps://github.com/Catherinejones\n"
+    echo -e "当前已安装版本:${shell_mode}\n"
+
+    echo -e "—————————————— 安装向导 ——————————————"""
+    echo -e "${Green}0.${Font}  升级 脚本"
+    echo -e "${Green}1.${Font}  安装 V2Ray (Nginx+ws+tls)"
+    echo -e "${Green}2.${Font}  安装 V2Ray (http/2)"
+    echo -e "${Green}3.${Font}  升级 V2Ray core"
+    echo -e "—————————————— 配置变更 ——————————————"
+    echo -e "${Green}4.${Font}  变更 UUID"
+    echo -e "${Green}6.${Font}  变更 port"
+    echo -e "${Green}7.${Font}  变更 TLS 版本(仅ws+tls有效)"
+    echo -e "${Green}18.${Font}  变更伪装路径"
+    echo -e "—————————————— 查看信息 ——————————————"
+    echo -e "${Green}8.${Font}  查看 实时访问日志"
+    echo -e "${Green}9.${Font}  查看 实时错误日志"
+    echo -e "${Green}10.${Font} 查看 V2Ray 配置信息"
+    echo -e "—————————————— 其他选项 ——————————————"
+    echo -e "${Green}11.${Font} 安装 4合1 bbr 锐速安装脚本"
+    echo -e "${Green}12.${Font} 安装 MTproxy(支持TLS混淆)"
+    echo -e "${Green}13.${Font} 证书 有效期更新"
+    echo -e "${Green}14.${Font} 卸载 V2Ray"
+    echo -e "${Green}15.${Font} 更新 证书crontab计划任务"
+    echo -e "${Green}16.${Font} 清空 证书遗留文件"
+    echo -e "${Green}17.${Font} 退出 \n"
+
+    read -rp "请输入数字：" menu_num
+    case $menu_num in
+    0)
+        update_sh
+        ;;
+    1)
+        shell_mode="ws"
+        install_v2ray_ws_tls
+        ;;
+    2)
+        shell_mode="h2"
+        install_v2_h2
+        ;;
+    3)
+        bash <(curl -L -s https://raw.githubusercontents.com/Catheringinx/V2Ray_ws-tls_bash_onekeyinstall/${github_branch}/v2ray.sh)
+        ;;
+    4)
+        read -rp "请输入UUID:" UUID
+        modify_UUID
+        start_process_systemd
+        ;;
+    6)
+        read -rp "请输入连接端口:" port
+        if grep -q "ws" $v2ray_qr_config_file; then
+            modify_nginx_port
+        elif grep -q "h2" $v2ray_qr_config_file; then
+            modify_inbound_port
+        fi
+        start_process_systemd
+        ;;
+    7)
+        tls_type
+        ;;
+    8)
+        show_access_log
+        ;;
+    9)
+        show_error_log
+        ;;
+    10)
+        basic_information
+        if [[ $shell_mode == "ws" ]]; then
+            vmess_link_image_choice
+        else
+            vmess_qr_link_image
+        fi
+        show_information
+        ;;
+    11)
+        bbr_boost_sh
+        ;;
+    12)
+        mtproxy_sh
+        ;;
+    13)
+        stop_process_systemd
+        ssl_update_manuel
+        start_process_systemd
+        ;;
+    14)
+        source '/etc/os-release'
+        uninstall_all
+        ;;
+    15)
+        acme_cron_update
+        ;;
+    16)
+        delete_tls_key_and_crt
+        ;;
+    17)
+        exit 0
+        ;;
+    18)
+        read -rp "请输入伪装路径(注意！不需要加斜杠 eg:ray):" camouflage_path
+        modify_camouflage_path
+        start_process_systemd
+        ;;
+    *)
+        echo -e "${RedBG}请输入正确的数字${Font}"
+        ;;
+    esac
+}
+
+judge_mode
+list "$1"
